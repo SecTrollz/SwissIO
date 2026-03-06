@@ -1,5 +1,5 @@
 """
-USB Nexus - Device Detection & Fingerprinting Engine
+SwissIO - Device Detection & Fingerprinting Engine
 Supports macOS via system_profiler + libusb (pyusb)
 """
 

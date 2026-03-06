@@ -1,137 +1,80 @@
-# USB Nexus
+# SwissIO
 
-**Universal USB-C Device Terminal** — plug in anything, get a terminal.
+SwissIO is a **local-only USB device workbench** transitioning from a Python prototype to a shared Rust hardware core.
 
-## What It Does
+> SwissIO operates within host OS permissions and protocol access. It does not bypass kernel/device security boundaries.
 
-Connects to any USB-C device, auto-detects its capabilities, and provides:
-- **Full display output** if the device supports DisplayPort Alt Mode
-- **Terminal session** (browser-based) for everything else
-- Supports DFU flashing, UART serial, JTAG/SWD, and raw USB memory access
+## Current repository layout
 
-## Quick Start (macOS)
+- `app.py`, `detector.py`, `protocols.py`: active Python host prototype (device events + terminal bridge).
+- `index.html`: 3-pane workbench UI (Rack / Workflow Canvas / Logic Trace).
+- `swissengine/`: Rust core primitives for session safety, endpoint sweep mapping, risk scoring, and trace buffering.
+- `swissio_state_of_union.md`: architecture direction and parity targets.
 
-```bash
-chmod +x run.sh
-./run.sh
-# Opens http://localhost:8765 automatically
-```
-
-## Architecture
-
-```
-usb_nexus/
-├── app.py              FastAPI backend + WebSocket terminal bridge
-├── detector.py         USB enumeration, alt-mode detection, board fingerprinting
-├── protocols/
-│   └── __init__.py     DFUHandler / UARTHandler / OpenOCDHandler / IOMMUHandler
-├── static/
-│   └── index.html      Browser terminal UI (xterm.js + WebSocket)
-└── run.sh              macOS setup + launch script
-```
-
-## System Dependencies (macOS)
+## Active runtime (prototype)
 
 ```bash
-brew install libusb open-ocd dfu-util
-pip install fastapi uvicorn pyserial pyusb
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 app.py
 ```
 
-## Terminal Commands
+Open: `http://localhost:8765`
 
-### Device Detection
-| Command | Description |
-|---------|-------------|
-| `scan`  | Enumerate all connected USB devices |
-| `ports` | List available serial ports |
+## Workflow model
 
-### DFU (Device Firmware Upgrade)
-| Command | Description |
-|---------|-------------|
-| `dfu list` | List DFU-capable devices |
-| `dfu read [/path/out.bin]` | Read firmware from device |
-| `dfu flash <firmware.bin>` | Flash firmware to device |
-| `dfu detach` | Send DFU_DETACH command |
+The UI supports a simple **Beginner mode** with step-by-step guidance and an **Expert mode** with deeper diagnostic tactics and richer protocol workflow hints.
 
-### UART / Serial
-| Command | Description |
-|---------|-------------|
-| `uart open <port> [baud]` | Open serial connection (default 115200) |
-| `uart baud <port>` | Auto-detect baud rate |
-| `uart close` | Close active serial connection |
+1. **Discover**
+   - Passive inventory (`scan`) and capability checks (`dfu list`).
+2. **Inspect**
+   - Read-only probing (`ports`, `mem probe`, `uart baud`).
+3. **Operate**
+   - Active write/flash commands are blocked unless the session is armed **and** set to tier 3 (Flash-Gated).
 
-### JTAG / SWD (OpenOCD)
-| Command | Description |
-|---------|-------------|
-| `jtag probe [iface] [target]` | Probe JTAG/SWD chain |
-| `jtag halt` | Halt target CPU |
-| `jtag dump [file] [addr] [len]` | Dump flash memory |
-| `jtag flash <file> [addr]` | Flash binary image |
-| `jtag server` | Start OpenOCD interactive server |
-| `jtag cmd <tcl>` | Send Tcl command to running OpenOCD |
+Session controls:
 
-Supported interfaces: `stlink`, `jlink`, `ftdi`, `cmsis`, `picoprobe`  
-Supported targets: `STM32`, `nRF52`, `RP2040`, `ESP32`, `Atmel SAM`
+- `profile beginner|expert` sets the command guidance/tactics profile for the terminal session.
+- `arm on|off` enables/disables write-class commands (`dfu flash`, `jtag flash`, `mem write`).
+- `tier 1|2|3` sets discovery depth intent for the Python session (`tier 3` is Flash-Gated).
 
-### Memory / IOMMU
-| Command | Description |
-|---------|-------------|
-| `mem probe [vid] [pid]` | Enumerate USB device endpoints |
-| `mem read <addr_hex> [len_hex]` | Vendor control transfer read |
-| `mem write <addr_hex> <data_hex>` | Vendor control transfer write |
-| `mem bulk [ep_hex] [len]` | Bulk endpoint read |
+## Rust core mechanics (`swissengine`)
 
-## Board Detection (Auto-Fingerprinted)
+- `SwissIOSession` (`Arc<RwLock<SessionState>>`) for backend safety gating.
+- `gated_write(...)` helper that rejects writes unless the session is armed in flash tier.
+- `EndpointMap::from_endpoint_sweep(...)` for endpoint probing across `0x01..0x0F` and `0x81..0x8F`.
+- Risk formula implementation: **`Risk = Tier * (HiddenEndpoints + 1)`**.
+- `TraceRingBuffer` + `estimate_entropy(...)` for entropy-driven trace visualization pipelines.
 
-| VID:PID | Board |
-|---------|-------|
-| 0483:df11 | STM32 (DFU mode) |
-| 0483:374b | STM32 + ST-Link v2 |
-| 1915:521f | Nordic nRF52840 DFU |
-| 303a:1001 | Espressif ESP32-S3 |
-| 2e8a:0003 | Raspberry Pi RP2040 |
-| 03eb:2ff4 | Atmel AVR DFU |
-| 1a86:7523 | CH340 (common ESP32 UART bridge) |
-| 10c4:ea60 | CP2102 (Silicon Labs UART bridge) |
-| 0403:6001 | FTDI FT232 |
+Run crate tests:
 
-## Example: Vape from the Gas Station
-
-```
-nexus> scan
-Found 1 device:
-  Shenzhen Generic — USB SERIAL (CH340)
-    VID:PID  1a86:7523
-    Family   ESP32
-    Mode     serial_cdc
-    Port     /dev/tty.wchusbserial110
-
-nexus> uart open /dev/tty.wchusbserial110 115200
-[UART] Opening /dev/tty.wchusbserial110 @ 115200 baud...
-[UART] Connected.
-ets Jun  8 2016 00:22:57
-rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
-...
-
-nexus> uart close
-nexus> mem probe 1a86 7523
-[IOMMU] Found device: DEVICE ID 1A86:7523...
-  Configuration 1
-    Interface 0 | Class: 0xff | Subclass: 0x01
-      EP 0x02 [OUT] Bulk maxPacket=32
-      EP 0x82 [IN]  Bulk maxPacket=32
+```bash
+cargo test --manifest-path swissengine/Cargo.toml
 ```
 
-## WebSocket API
 
-**Device events**: `ws://localhost:8765/ws/devices`  
-**Terminal sessions**: `ws://localhost:8765/ws/terminal/{session_id}`
+## Local AI + Ghidra MCP assist
 
-Messages follow `{ "type": "input"|"output"|"devices", "data": ... }` format.
+SwissIO now includes a local assistant command group in the terminal:
 
-## macOS Notes
+- `ai status` — show local assistant state and MCP bridge config
+- `ai ghidra` — print Ghidra MCP local endpoint config
+- `ai explain <terminal text>` — summarize what output likely means
+- `ai check <command>` — run preflight logic gate checks before execution
 
-- libusb is required for pyusb (`brew install libusb`)  
-- Full IOMMU/`/dev/mem` access is blocked by macOS SIP — use USB control transfers instead  
-- OpenOCD requires target-specific interface and target configs; edit `OPENOCD_TARGET_MAP` in `protocols/__init__.py`  
-- For ST-Link access, macOS may need the FTDI kernel extension workaround
+Environment variables for local Ghidra MCP wiring:
+
+- `SWISSIO_GHIDRA_MCP_ENABLED=1`
+- `SWISSIO_GHIDRA_MCP_SERVER=ghidra-local`
+- `SWISSIO_GHIDRA_MCP_ENDPOINT=mcp://ghidra-local`
+- `SWISSIO_GHIDRA_PROJECT_DIR=./ghidra_projects`
+
+## Right-to-repair
+
+See `RIGHT_TO_REPAIR.md` for a practical repair/repurpose playbook focused on auditable host-permission workflows.
+
+## Notes
+
+- Repository remains host-only and local-only.
+- Protocol operations still depend on host tooling availability (`dfu-util`, `openocd`, serial access).

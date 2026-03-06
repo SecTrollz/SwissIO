@@ -1,5 +1,5 @@
 """
-USB Nexus — Protocol Handlers
+SwissIO — Protocol Handlers
 DFU / UART / OpenOCD / IOMMU
 Each handler returns an async generator that yields terminal output lines.
 """
