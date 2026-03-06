@@ -1,790 +1,261 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>USB Nexus</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/addon-fit.min.js"></script>
-<style>
-  :root {
-    --bg:        #0a0c0a;
-    --bg2:       #0f120f;
-    --bg3:       #141914;
-    --panel:     #111511;
-    --border:    #1e2e1e;
-    --border2:   #2a402a;
-    --green:     #39ff14;
-    --green-dim: #1a7a07;
-    --green-mid: #27c209;
-    --amber:     #ffb300;
-    --amber-dim: #7a5500;
-    --red:       #ff3b3b;
-    --cyan:      #00e5ff;
-    --cyan-dim:  #006373;
-    --text:      #c8e6c9;
-    --text-dim:  #4a6b4a;
-    --text-mid:  #7ab87a;
-    --scan:      rgba(57,255,20,0.04);
-  }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SwissIO Workbench</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/addon-fit.min.js"></script>
+  <style>
+    :root {
+      --bg: #111317;
+      --panel: #191d24;
+      --panel2: #212733;
+      --line: #2f3746;
+      --text: #e4e8ef;
+      --muted: #98a1b3;
+      --cyan: #00f2ff;
+      --orange: #ff8c00;
+      --ok: #5bd27f;
+      --warn: #ffd166;
+      --danger: #ff5d5d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+    #app { display: grid; grid-template-columns: 280px 1fr 360px; grid-template-rows: 56px 1fr; height: 100vh; }
+    header { grid-column: 1/-1; display:flex; align-items:center; gap:16px; padding:0 16px; border-bottom:1px solid var(--line); background:#12161d; }
+    .logo { font-weight:700; letter-spacing:.08em; }
+    .logo b { color: var(--cyan); }
+    .pill { border:1px solid var(--line); padding:4px 10px; border-radius:999px; color:var(--muted); font-size:12px; }
+    .pill strong { color: var(--text); }
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    .panel { border-right:1px solid var(--line); overflow:auto; }
+    .section-title { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin:14px 14px 10px; }
 
-  html, body {
-    height: 100%; width: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 13px;
-    overflow: hidden;
-  }
+    #rack { background: var(--panel); }
+    .device { margin:0 10px 8px; padding:10px; background: #131821; border:1px solid var(--line); border-radius:10px; cursor:pointer; }
+    .device.active { border-color: var(--cyan); }
+    .device small { color:var(--muted); }
+    .badges { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
+    .badge { font-size:11px; border:1px solid var(--line); color:var(--muted); padding:2px 6px; border-radius:99px; }
 
-  /* CRT scan line overlay */
-  body::before {
-    content: '';
-    position: fixed; inset: 0; z-index: 9999;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.15) 2px,
-      rgba(0,0,0,0.15) 4px
-    );
-  }
+    #canvas { background: #141922; padding:14px; }
+    .workflow { display:flex; gap:8px; margin-bottom:12px; }
+    .workflow button { border:1px solid var(--line); background:var(--panel2); color:var(--text); padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .workflow button:hover { border-color:var(--cyan); }
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+    .toggle { display:flex; align-items:center; gap:8px; background:var(--panel2); border:1px solid var(--line); padding:8px 10px; border-radius:8px; }
+    .toggle input { accent-color: var(--orange); }
+    .select, .action { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; }
+    .action { cursor:pointer; }
+    .action.danger { border-color:#5b2d2d; color:#ffb1b1; }
 
-  /* Green phosphor glow on edges */
-  body::after {
-    content: '';
-    position: fixed; inset: 0; z-index: 9998;
-    pointer-events: none;
-    background: radial-gradient(ellipse at 50% 0%, rgba(57,255,20,0.04) 0%, transparent 70%),
-                radial-gradient(ellipse at 50% 100%, rgba(57,255,20,0.02) 0%, transparent 70%);
-  }
+    #detail { border:1px solid var(--line); background:var(--panel); border-radius:10px; padding:12px; margin-bottom:12px; min-height:180px; }
+    #detail p { color:var(--muted); margin:8px 0; }
 
-  /* ── Layout ────────────────────────────────────────────── */
-  #app {
-    display: grid;
-    grid-template-rows: 48px 1fr;
-    grid-template-columns: 260px 1fr 220px;
-    height: 100vh;
-    gap: 0;
-  }
-
-  /* ── Header ────────────────────────────────────────────── */
-  #header {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border2);
-    display: flex;
-    align-items: center;
-    padding: 0 16px;
-    gap: 20px;
-    position: relative;
-    overflow: hidden;
-  }
-  #header::after {
-    content: '';
-    position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
-    background: linear-gradient(90deg, transparent, var(--green-dim), transparent);
-  }
-
-  .logo {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: 0.3em;
-    color: var(--green);
-    text-shadow: 0 0 20px var(--green-dim), 0 0 40px rgba(57,255,20,0.2);
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .logo span { color: var(--text-mid); font-weight: 300; }
-
-  .header-sep { flex: 1; }
-
-  .status-pill {
-    display: flex; align-items: center; gap: 6px;
-    padding: 3px 10px;
-    border: 1px solid var(--border2);
-    border-radius: 2px;
-    font-size: 11px;
-    color: var(--text-dim);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  .status-pill .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--green-dim);
-    box-shadow: 0 0 6px var(--green-dim);
-    animation: pulse 2s ease-in-out infinite;
-  }
-  .status-pill.active .dot {
-    background: var(--green);
-    box-shadow: 0 0 10px var(--green);
-  }
-  .status-pill.warn .dot { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
-  .status-pill.err  .dot { background: var(--red);   box-shadow: 0 0 10px var(--red); }
-
-  #device-count {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 14px; font-weight: 500;
-    color: var(--text-mid);
-    letter-spacing: 0.05em;
-  }
-  #device-count b { color: var(--green); font-size: 18px; }
-
-  /* ── Left Panel: Device List ───────────────────────────── */
-  #sidebar {
-    grid-column: 1;
-    grid-row: 2;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-
-  .panel-header {
-    padding: 10px 14px 8px;
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 11px; font-weight: 700;
-    letter-spacing: 0.2em;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 8px;
-    flex-shrink: 0;
-  }
-  .panel-header .icon {
-    width: 16px; height: 16px; opacity: 0.6;
-    fill: none; stroke: currentColor; stroke-width: 1.5;
-  }
-
-  #device-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-  }
-  #device-list::-webkit-scrollbar { width: 3px; }
-  #device-list::-webkit-scrollbar-track { background: transparent; }
-  #device-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
-
-  .device-card {
-    margin: 3px 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    cursor: pointer;
-    transition: all 0.15s;
-    position: relative;
-    overflow: hidden;
-  }
-  .device-card::before {
-    content: '';
-    position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
-    background: var(--green-dim);
-    transition: background 0.15s;
-  }
-  .device-card:hover, .device-card.selected {
-    border-color: var(--border2);
-    background: rgba(57,255,20,0.03);
-  }
-  .device-card:hover::before, .device-card.selected::before {
-    background: var(--green);
-    box-shadow: 0 0 8px var(--green-dim);
-  }
-
-  .device-name {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 13px; font-weight: 600;
-    color: var(--text);
-    letter-spacing: 0.05em;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .device-vid {
-    font-size: 10px; color: var(--text-dim);
-    margin-top: 2px; letter-spacing: 0.05em;
-  }
-  .device-badges {
-    display: flex; gap: 4px; flex-wrap: wrap;
-    margin-top: 5px;
-  }
-  .badge {
-    padding: 1px 5px;
-    font-size: 9px; letter-spacing: 0.1em;
-    text-transform: uppercase;
-    border-radius: 1px;
-    border: 1px solid;
-  }
-  .badge.dfu    { color: var(--amber);    border-color: var(--amber-dim);  background: rgba(255,179,0,0.06); }
-  .badge.jtag   { color: var(--cyan);     border-color: var(--cyan-dim);   background: rgba(0,229,255,0.06); }
-  .badge.uart   { color: var(--green-mid);border-color: var(--green-dim);  background: rgba(57,255,20,0.04); }
-  .badge.dp     { color: #b39ddb;         border-color: #4a3f6b;           background: rgba(179,157,219,0.06); }
-  .badge.family { color: var(--text-mid); border-color: var(--border2);    background: transparent; }
-
-  .no-devices {
-    padding: 24px 16px;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 11px; letter-spacing: 0.05em;
-    line-height: 2;
-  }
-  .no-devices .plug-icon {
-    font-size: 28px; display: block; margin-bottom: 8px; opacity: 0.3;
-  }
-
-  /* ── Center Panel: Terminal ────────────────────────────── */
-  #terminal-panel {
-    grid-column: 2;
-    grid-row: 2;
-    display: flex; flex-direction: column;
-    background: var(--bg);
-    overflow: hidden;
-    position: relative;
-  }
-
-  .terminal-toolbar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 12px;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .terminal-toolbar .t-title {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 11px; font-weight: 700;
-    letter-spacing: 0.2em; color: var(--text-dim);
-    text-transform: uppercase;
-  }
-  .sep { flex: 1; }
-  .toolbar-btn {
-    padding: 3px 8px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 10px; letter-spacing: 0.1em;
-    color: var(--text-dim);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 1px;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-transform: uppercase;
-  }
-  .toolbar-btn:hover {
-    color: var(--green);
-    border-color: var(--green-dim);
-    background: rgba(57,255,20,0.05);
-  }
-
-  #terminal-wrap {
-    flex: 1;
-    padding: 8px;
-    overflow: hidden;
-    position: relative;
-  }
-  #terminal-wrap .xterm { height: 100%; }
-
-  /* Phosphor flicker animation */
-  @keyframes flicker {
-    0%,100% { opacity: 1; }
-    92% { opacity: 1; }
-    93% { opacity: 0.95; }
-    94% { opacity: 1; }
-    96% { opacity: 0.92; }
-    97% { opacity: 1; }
-  }
-  #terminal-wrap { animation: flicker 8s infinite; }
-
-  /* Input line */
-  #input-wrap {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg2);
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .prompt {
-    color: var(--green);
-    font-size: 13px;
-    text-shadow: 0 0 8px var(--green-dim);
-    white-space: nowrap;
-    user-select: none;
-  }
-  #cmd-input {
-    flex: 1;
-    background: transparent; border: none; outline: none;
-    color: var(--green);
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 13px;
-    caret-color: var(--green);
-    text-shadow: 0 0 6px var(--green-dim);
-  }
-  #cmd-input::placeholder { color: var(--text-dim); }
-
-  /* ── Right Panel: Device Details ──────────────────────── */
-  #details-panel {
-    grid-column: 3;
-    grid-row: 2;
-    background: var(--panel);
-    border-left: 1px solid var(--border);
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-
-  #details-body {
-    flex: 1; overflow-y: auto;
-    padding: 12px;
-  }
-  #details-body::-webkit-scrollbar { width: 3px; }
-  #details-body::-webkit-scrollbar-thumb { background: var(--border2); }
-
-  .detail-section {
-    margin-bottom: 16px;
-  }
-  .detail-section-title {
-    font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--green-dim); margin-bottom: 6px;
-    border-bottom: 1px solid var(--border); padding-bottom: 3px;
-  }
-  .detail-row {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    padding: 3px 0;
-    font-size: 11px;
-    border-bottom: 1px solid rgba(30,46,30,0.5);
-  }
-  .detail-row:last-child { border-bottom: none; }
-  .detail-label { color: var(--text-dim); flex-shrink: 0; margin-right: 8px; }
-  .detail-val {
-    color: var(--text-mid); text-align: right;
-    word-break: break-all;
-    font-size: 10px;
-  }
-  .detail-val.green { color: var(--green-mid); }
-  .detail-val.amber { color: var(--amber); }
-  .detail-val.cyan  { color: var(--cyan); }
-
-  .action-btn {
-    width: 100%; padding: 6px;
-    background: transparent;
-    border: 1px solid var(--border2);
-    color: var(--text-mid);
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-    cursor: pointer; margin-bottom: 4px;
-    border-radius: 1px; transition: all 0.15s;
-    text-align: left;
-  }
-  .action-btn::before { content: '▶ '; color: var(--green-dim); font-size: 8px; }
-  .action-btn:hover {
-    border-color: var(--green-mid);
-    color: var(--green);
-    background: rgba(57,255,20,0.05);
-  }
-  .action-btn:hover::before { color: var(--green); }
-
-  .no-selection {
-    padding: 24px 12px;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 11px; line-height: 2;
-  }
-
-  /* ── Animations ────────────────────────────────────────── */
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-4px); }
-    to   { opacity: 1; transform: translateX(0); }
-  }
-  .device-card { animation: slideIn 0.2s ease-out; }
-
-  @keyframes scanline {
-    from { transform: translateY(-100%); }
-    to   { transform: translateY(100vh); }
-  }
-  .scan-overlay {
-    position: fixed; left: 0; right: 0; height: 80px; z-index: 9997;
-    background: linear-gradient(transparent, var(--scan), transparent);
-    pointer-events: none;
-    animation: scanline 4s linear infinite;
-  }
-
-  /* Status bar at bottom of terminal */
-  .terminal-statusbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 3px 12px;
-    background: var(--bg2);
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    font-size: 10px; color: var(--text-dim); letter-spacing: 0.05em;
-  }
-  .terminal-statusbar .sep { flex: 1; }
-  .terminal-statusbar .stat { display: flex; align-items: center; gap: 4px; }
-  .terminal-statusbar .dot { width:5px;height:5px;border-radius:50%; }
-
-  /* Hotkey chip */
-  kbd {
-    display: inline-block;
-    padding: 1px 4px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 9px;
-    border: 1px solid var(--border2);
-    border-radius: 2px;
-    color: var(--text-dim);
-    background: var(--bg3);
-  }
-</style>
+    #trace { background:var(--panel); border-left:1px solid var(--line); display:flex; flex-direction:column; }
+    #terminal { flex:1; padding:6px; }
+    #quick { border-top:1px solid var(--line); padding:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    #quick button { border:1px solid var(--line); background:var(--panel2); color:var(--text); border-radius:8px; padding:8px; cursor:pointer; }
+    #quick button:hover { border-color: var(--cyan); }
+  </style>
 </head>
 <body>
+  <div id="app">
+    <header>
+      <div class="logo"><b>SWISS</b>IO WORKBENCH</div>
+      <div class="pill">Mode: <strong>Local-Only</strong></div>
+      <div class="pill">Devices: <strong id="count">0</strong></div>
+      <div class="pill">Safety: <strong id="safety">DISARMED</strong></div>
+      <div class="pill">Mode: <strong id="mode">BEGINNER</strong></div>
+    </header>
 
-<div class="scan-overlay"></div>
+    <aside id="rack" class="panel">
+      <div class="section-title">The Rack</div>
+      <div id="devices"></div>
+    </aside>
 
-<div id="app">
-
-  <!-- ── Header ───────────────────────────────────────────────── -->
-  <header id="header">
-    <div class="logo">USB<span>_</span>NEXUS</div>
-    <div id="device-count"><b id="count-num">0</b> devices</div>
-    <div class="header-sep"></div>
-    <div class="status-pill" id="conn-status">
-      <span class="dot"></span>
-      <span id="conn-label">connecting</span>
-    </div>
-    <div class="status-pill" id="ws-status">
-      <span class="dot"></span>
-      <span>ws</span>
-    </div>
-  </header>
-
-  <!-- ── Sidebar: Device List ─────────────────────────────────── -->
-  <aside id="sidebar">
-    <div class="panel-header">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-      DETECTED DEVICES
-    </div>
-    <div id="device-list">
-      <div class="no-devices">
-        <span class="plug-icon">⚡</span>
-        Plug in a USB-C device<br>to begin enumeration
+    <main id="canvas">
+      <div class="section-title">Workflow Canvas</div>
+      <div class="workflow">
+        <button onclick="runDiscover()">Discover</button>
+        <button onclick="runInspect()">Inspect</button>
+        <button onclick="runOperate()">Operate</button>
       </div>
-    </div>
-  </aside>
+      <div class="controls">
+        <label class="toggle">
+          <input type="checkbox" id="arm" onchange="toggleArm()" />
+          ARM write/flash operations
+        </label>
+        <select id="mode-select" class="select" onchange="setMode()">
+          <option value="beginner">Beginner mode</option>
+          <option value="expert">Expert mode</option>
+        </select>
+        <select id="tier" class="select" onchange="setTier()">
+          <option value="1">Tier 1 - Passive Map</option>
+          <option value="2">Tier 2 - Protocol Ping</option>
+          <option value="3">Tier 3 - Flash-Gated</option>
+        </select>
+        <button class="action" onclick="sendCmd('help')">help</button>
+        <button class="action" onclick="sendCmd('rights')">rights</button>
+        <button class="action" onclick="sendCmd('ai status')">ai status</button>
+        <button class="action danger" onclick="sendDanger('mem write 0x0 00')">write test (expert)</button>
+      </div>
 
-  <!-- ── Center: Terminal ─────────────────────────────────────── -->
-  <main id="terminal-panel">
-    <div class="terminal-toolbar">
-      <span class="t-title">Terminal</span>
-      <span id="session-label" style="font-size:10px;color:var(--text-dim);letter-spacing:.05em"></span>
-      <span class="sep"></span>
-      <button class="toolbar-btn" onclick="clearTerminal()">CLEAR</button>
-      <button class="toolbar-btn" onclick="sendCmd('scan')">SCAN</button>
-      <button class="toolbar-btn" onclick="sendCmd('help')">HELP</button>
-    </div>
-    <div id="terminal-wrap"></div>
-    <div id="input-wrap">
-      <span class="prompt">nexus&gt;</span>
-      <input id="cmd-input" autocomplete="off" spellcheck="false"
-             placeholder="type a command or 'help'..."
-             onkeydown="handleKey(event)">
-    </div>
-    <div class="terminal-statusbar">
-      <span class="stat">
-        <span class="dot" style="background:var(--green);box-shadow:0 0 6px var(--green)"></span>
-        <span id="mode-label">IDLE</span>
-      </span>
-      <span class="sep"></span>
-      <span><kbd>↑↓</kbd> history</span>
-      <span><kbd>tab</kbd> complete</span>
-      <span id="ts-label" style="color:var(--text-dim)"></span>
-    </div>
-  </main>
+      <section id="guide" style="border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:12px;margin-bottom:12px;">
+        <h3 style="margin:0 0 8px 0;">Quick guide (simple words)</h3>
+        <p style="margin:6px 0;color:var(--muted)"><b>Step 1:</b> Plug device in and click <b>Discover</b>.</p>
+        <p style="margin:6px 0;color:var(--muted)"><b>Step 2:</b> Click the device on the left to see paths and IDs.</p>
+        <p style="margin:6px 0;color:var(--muted)"><b>Step 3:</b> Click <b>Inspect</b> to read info safely.</p>
+        <p style="margin:6px 0;color:var(--muted)"><b>Step 4:</b> For write/flash actions, enable <b>ARM</b> and choose <b>Tier 3</b>.</p>
+      </section>
 
-  <!-- ── Right: Device Details ────────────────────────────────── -->
-  <aside id="details-panel">
-    <div class="panel-header">
-      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      DEVICE INFO
-    </div>
-    <div id="details-body">
-      <div class="no-selection">Select a device<br>to view details &amp; actions</div>
-    </div>
-  </aside>
+      <section id="expert-notes" style="display:none;border:1px solid #5b2d2d;background:#2a1d1d;border-radius:10px;padding:12px;margin-bottom:12px;">
+        <h3 style="margin:0 0 8px 0;color:#ffb1b1;">Expert notes (higher risk, still permission-bound)</h3>
+        <p style="margin:6px 0;color:#ffd8d8">Use this mode for deeper protocol tests: JTAG probe variants, DFU read/flash, memory probes, and custom command sequences.</p>
+        <p style="margin:6px 0;color:#ffd8d8">Write actions still require ARM + Tier 3 and only run where host OS/device permissions allow.</p>
+        <p style="margin:6px 0;color:#ffd8d8">Tip: run <code>scan</code> and use the detected location + serial path fields before changing firmware.</p>
+      </section>
 
-</div>
+      <section id="detail">
+        <h3 id="device-name">No device selected</h3>
+        <p id="device-id">Select a device from The Rack.</p>
+        <p id="device-mode"></p>
+        <p id="device-family"></p>
+        <p id="device-location"></p>
+        <p id="device-path"></p>
+      </section>
+    </main>
+
+    <section id="trace">
+      <div class="section-title">Logic Trace</div>
+      <div id="terminal"></div>
+      <div id="quick">
+        <button onclick="sendCmd('scan')">scan</button>
+        <button onclick="sendCmd('ports')">ports</button>
+        <button onclick="sendCmd('dfu list')">dfu list</button>
+        <button onclick="sendCmd('mem probe')">mem probe</button>
+        <button onclick="sendCmd('rights')">rights</button>
+        <button onclick="sendCmd('ai status')">ai status</button>
+      </div>
+    </section>
+  </div>
 
 <script>
-// ── State ─────────────────────────────────────────────────────────────
-let term, fitAddon;
-let deviceWs, termWs;
-let devices = [];
-let selectedDevice = null;
-let cmdHistory = [];
-let histIdx = -1;
-let sessionId = 'sess_' + Math.random().toString(36).slice(2, 9);
+  let selected = null;
+  let armed = false;
+  let uiMode = "beginner";
+  const session = crypto.randomUUID();
 
-// ── xterm.js setup ────────────────────────────────────────────────────
-function initTerminal() {
-  term = new Terminal({
-    theme: {
-      background: '#0a0c0a',
-      foreground: '#c8e6c9',
-      cursor:     '#39ff14',
-      cursorAccent: '#0a0c0a',
-      selectionBackground: 'rgba(57,255,20,0.2)',
-      black:   '#0a0c0a', brightBlack:   '#1e2e1e',
-      red:     '#ff3b3b', brightRed:     '#ff6b6b',
-      green:   '#39ff14', brightGreen:   '#80ff50',
-      yellow:  '#ffb300', brightYellow:  '#ffd54f',
-      blue:    '#4fc3f7', brightBlue:    '#81d4fa',
-      magenta: '#ce93d8', brightMagenta: '#e1bee7',
-      cyan:    '#00e5ff', brightCyan:    '#80deea',
-      white:   '#c8e6c9', brightWhite:   '#f1f8e9',
-    },
-    fontFamily: '"Share Tech Mono", "Courier New", monospace',
-    fontSize: 12,
-    lineHeight: 1.4,
-    letterSpacing: 0.5,
-    cursorStyle: 'block',
-    cursorBlink: true,
-    scrollback: 5000,
-    allowTransparency: true,
-  });
-  fitAddon = new FitAddon.FitAddon();
+  const term = new Terminal({ theme: { background:'#191d24', foreground:'#e4e8ef', cursor:'#00f2ff' }, fontSize:12 });
+  const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
-  term.open(document.getElementById('terminal-wrap'));
+  term.open(document.getElementById('terminal'));
   fitAddon.fit();
-  window.addEventListener('resize', () => fitAddon.fit());
-  term.writeln('\x1b[1;32m  USB Nexus v1.0 — Universal USB-C Device Terminal\x1b[0m');
-  term.writeln('\x1b[90m  ─────────────────────────────────────────────────\x1b[0m');
-  term.writeln('  Type \x1b[36mhelp\x1b[0m to see all commands');
-  term.writeln('  Plug in any USB-C device to begin');
-  term.writeln('');
-}
+  addEventListener('resize', ()=>fitAddon.fit());
 
-// ── WebSocket: device events ──────────────────────────────────────────
-function connectDeviceWs() {
-  const wsUrl = `ws://${location.host}/ws/devices`;
-  deviceWs = new WebSocket(wsUrl);
+  const deviceWS = new WebSocket(`ws://${location.host}/ws/devices`);
+  const termWS = new WebSocket(`ws://${location.host}/ws/terminal/${session}`);
 
-  deviceWs.onopen = () => setStatus('conn-status', 'active', 'scanning');
-  deviceWs.onclose = () => {
-    setStatus('conn-status', '', 'offline');
-    setTimeout(connectDeviceWs, 2000);
+  deviceWS.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type !== 'devices') return;
+    renderDevices(msg.data || []);
   };
-  deviceWs.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'devices') {
-      devices = msg.data;
-      renderDeviceList();
-      document.getElementById('count-num').textContent = devices.length;
+
+  termWS.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'output') term.write(msg.data.replace(/\n/g, '\r\n'));
+  };
+
+  function renderDevices(devices){
+    document.getElementById('count').textContent = devices.length;
+    const root = document.getElementById('devices');
+    root.innerHTML = '';
+    devices.forEach(d => {
+      const el = document.createElement('div');
+      el.className = 'device' + (selected?.id === d.id ? ' active' : '');
+      el.innerHTML = `<div><strong>${d.vendor_name || 'Unknown'}</strong></div>
+        <small>${d.product_name || ''}</small><br><small>${d.vendor_id}:${d.product_id}</small>
+        <div class='badges'>
+          <span class='badge'>${d.connection_mode}</span>
+          <span class='badge'>${d.board_family}</span>
+        </div>`;
+      el.onclick = () => selectDevice(d);
+      root.appendChild(el);
+    });
+  }
+
+  function selectDevice(d){
+    selected = d;
+    document.getElementById('device-name').textContent = `${d.vendor_name} ${d.product_name}`;
+    document.getElementById('device-id').textContent = `VID:PID ${d.vendor_id}:${d.product_id}`;
+    document.getElementById('device-mode').textContent = `Connection mode: ${d.connection_mode}`;
+    document.getElementById('device-family').textContent = `Board family: ${d.board_family}`;
+    document.getElementById('device-location').textContent = `Detected location path: ${d.location || 'not reported by OS'}`;
+    document.getElementById('device-path').textContent = `Detected serial path: ${d.serial_port || 'no serial path found'}`;
+  }
+
+  function sendCmd(command){
+    if (termWS.readyState !== WebSocket.OPEN) return;
+    termWS.send(JSON.stringify({ type:'input', data: command }));
+  }
+
+  function toggleArm(){
+    armed = document.getElementById('arm').checked;
+    document.getElementById('safety').textContent = armed ? 'ARMED' : 'DISARMED';
+    sendCmd(`arm ${armed ? "on" : "off"}`);
+  }
+
+  function setTier(){
+    const tier = document.getElementById('tier').value;
+    sendCmd(`tier ${tier}`);
+  }
+
+  function setMode(){
+    uiMode = document.getElementById('mode-select').value;
+    document.getElementById('mode').textContent = uiMode.toUpperCase();
+    const guide = document.getElementById('guide');
+    const expertNotes = document.getElementById('expert-notes');
+    guide.style.display = uiMode === 'beginner' ? 'block' : 'none';
+    expertNotes.style.display = uiMode === 'expert' ? 'block' : 'none';
+    sendCmd(`profile ${uiMode}`);
+  }
+
+  function sendDanger(command){
+    const tier = document.getElementById('tier').value;
+    if (!armed || tier !== "3"){
+      term.writeln('\r\n\x1b[31m[blocked]\x1b[0m enable ARM + tier 3 for write/flash');
+      return;
     }
-  };
-}
+    sendCmd(command);
+  }
 
-// ── WebSocket: terminal ───────────────────────────────────────────────
-function connectTerminalWs() {
-  const wsUrl = `ws://${location.host}/ws/terminal/${sessionId}`;
-  termWs = new WebSocket(wsUrl);
-
-  termWs.onopen = () => {
-    setStatus('ws-status', 'active', 'ws');
-    document.getElementById('session-label').textContent = sessionId;
-  };
-  termWs.onclose = () => {
-    setStatus('ws-status', 'err', 'ws-err');
-    term.writeln('\x1b[31m[nexus] Connection lost. Reconnecting...\x1b[0m');
-    setTimeout(connectTerminalWs, 2000);
-  };
-  termWs.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'output') {
-      // Write raw ANSI output to terminal
-      term.write(msg.data.replace(/\n/g, '\r\n'));
-      updateTimestamp();
+  function runDiscover(){
+    sendCmd('scan');
+    if (document.getElementById('tier').value !== '1') sendCmd('dfu list');
+  }
+  function runInspect(){
+    sendCmd('ports');
+    sendCmd('mem probe');
+  }
+  function runOperate(){
+    if (uiMode === 'beginner') {
+      if (!armed) {
+        term.writeln('\r\n\x1b[33mOperate blocked:\x1b[0m enable ARM first (and tier 3 for write/flash).');
+        return;
+      }
+      sendCmd('jtag probe');
+      return;
     }
-  };
-}
 
-// ── Render device list ────────────────────────────────────────────────
-function renderDeviceList() {
-  const list = document.getElementById('device-list');
-  if (!devices.length) {
-    list.innerHTML = `<div class="no-devices">
-      <span class="plug-icon">⚡</span>
-      Plug in a USB-C device<br>to begin enumeration
-    </div>`;
-    return;
+    // Expert mode chooses a more detailed tactic chain
+    sendCmd('scan');
+    sendCmd('dfu list');
+    sendCmd('jtag probe stlink STM32');
+    sendCmd('mem probe');
   }
-
-  list.innerHTML = devices.map((d, i) => {
-    const badges = [];
-    if (d.supports_dfu)    badges.push(`<span class="badge dfu">DFU</span>`);
-    if (d.supports_jtag)   badges.push(`<span class="badge jtag">JTAG</span>`);
-    if (d.serial_port)     badges.push(`<span class="badge uart">UART</span>`);
-    if (d.supports_display)badges.push(`<span class="badge dp">DP</span>`);
-    if (d.board_family !== 'Unknown')
-      badges.push(`<span class="badge family">${d.board_family}</span>`);
-
-    const sel = selectedDevice && selectedDevice.vendor_id === d.vendor_id &&
-                selectedDevice.product_id === d.product_id ? 'selected' : '';
-    return `
-      <div class="device-card ${sel}" onclick="selectDevice(${i})">
-        <div class="device-name">${escHtml(d.product_name)}</div>
-        <div class="device-vid">${d.vendor_id}:${d.product_id} · ${escHtml(d.vendor_name)}</div>
-        ${badges.length ? `<div class="device-badges">${badges.join('')}</div>` : ''}
-      </div>`;
-  }).join('');
-}
-
-// ── Select device ─────────────────────────────────────────────────────
-function selectDevice(idx) {
-  selectedDevice = devices[idx];
-  renderDeviceList();
-  renderDetails(selectedDevice);
-  term.writeln(`\x1b[90m[nexus] Selected: ${selectedDevice.product_name} (${selectedDevice.vendor_id}:${selectedDevice.product_id})\x1b[0m`);
-  term.writeln('');
-  document.getElementById('cmd-input').focus();
-}
-
-function renderDetails(d) {
-  const body = document.getElementById('details-body');
-
-  const modeColor = {
-    'dfu': 'amber', 'serial_cdc': 'green', 'serial_uart': 'green',
-    'usb3': 'cyan', 'thunderbolt': 'cyan'
-  }[d.connection_mode] || '';
-
-  body.innerHTML = `
-    <div class="detail-section">
-      <div class="detail-section-title">Identity</div>
-      <div class="detail-row"><span class="detail-label">Product</span><span class="detail-val green">${escHtml(d.product_name)}</span></div>
-      <div class="detail-row"><span class="detail-label">Vendor</span><span class="detail-val">${escHtml(d.vendor_name)}</span></div>
-      <div class="detail-row"><span class="detail-label">VID:PID</span><span class="detail-val amber">${d.vendor_id}:${d.product_id}</span></div>
-      ${d.serial_number ? `<div class="detail-row"><span class="detail-label">Serial</span><span class="detail-val">${escHtml(d.serial_number)}</span></div>` : ''}
-    </div>
-
-    <div class="detail-section">
-      <div class="detail-section-title">Connection</div>
-      <div class="detail-row"><span class="detail-label">Mode</span><span class="detail-val ${modeColor}">${d.connection_mode.replace('_',' ').toUpperCase()}</span></div>
-      <div class="detail-row"><span class="detail-label">USB</span><span class="detail-val">${d.usb_version}</span></div>
-      <div class="detail-row"><span class="detail-label">Speed</span><span class="detail-val">${d.speed || '—'}</span></div>
-      ${d.serial_port ? `<div class="detail-row"><span class="detail-label">Port</span><span class="detail-val green">${d.serial_port}</span></div>` : ''}
-    </div>
-
-    <div class="detail-section">
-      <div class="detail-section-title">Board</div>
-      <div class="detail-row"><span class="detail-label">Family</span><span class="detail-val cyan">${d.board_family}</span></div>
-      <div class="detail-row"><span class="detail-label">DFU</span><span class="detail-val ${d.supports_dfu ? 'green' : ''}">${d.supports_dfu ? '✓ YES' : '—'}</span></div>
-      <div class="detail-row"><span class="detail-label">JTAG</span><span class="detail-val ${d.supports_jtag ? 'cyan' : ''}">${d.supports_jtag ? '✓ YES' : '—'}</span></div>
-    </div>
-
-    <div class="detail-section">
-      <div class="detail-section-title">Quick Actions</div>
-      ${d.supports_dfu ? `<button class="action-btn" onclick="sendCmd('dfu list')">DFU List Devices</button>
-        <button class="action-btn" onclick="sendCmd('dfu read')">DFU Read Firmware</button>` : ''}
-      ${d.serial_port ? `<button class="action-btn" onclick="sendCmd('uart open ${d.serial_port}')">Open UART Terminal</button>
-        <button class="action-btn" onclick="sendCmd('uart baud ${d.serial_port}')">Detect Baud Rate</button>` : ''}
-      ${d.supports_jtag ? `<button class="action-btn" onclick="sendCmd('jtag probe stlink ${d.board_family}')">JTAG Probe</button>
-        <button class="action-btn" onclick="sendCmd('jtag dump /tmp/dump.bin 0x08000000 0x80000')">Dump Flash</button>` : ''}
-      <button class="action-btn" onclick="sendCmd('mem probe ${d.vendor_id} ${d.product_id}')">Probe USB Endpoints</button>
-    </div>
-  `;
-}
-
-// ── Terminal input ────────────────────────────────────────────────────
-function handleKey(e) {
-  if (e.key === 'Enter') {
-    const val = e.target.value.trim();
-    if (!val) return;
-    cmdHistory.unshift(val);
-    if (cmdHistory.length > 100) cmdHistory.pop();
-    histIdx = -1;
-    e.target.value = '';
-    sendCmd(val);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    histIdx = Math.min(histIdx + 1, cmdHistory.length - 1);
-    e.target.value = cmdHistory[histIdx] || '';
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    histIdx = Math.max(histIdx - 1, -1);
-    e.target.value = histIdx === -1 ? '' : cmdHistory[histIdx];
-  } else if (e.key === 'Tab') {
-    e.preventDefault();
-    autocomplete(e.target);
-  }
-}
-
-const COMMANDS = ['help','scan','ports','dfu list','dfu read','dfu flash','dfu detach',
-  'uart open','uart baud','uart close','jtag probe','jtag halt','jtag dump','jtag flash',
-  'jtag server','jtag cmd','mem probe','mem read','mem write','mem bulk'];
-
-function autocomplete(input) {
-  const val = input.value;
-  const matches = COMMANDS.filter(c => c.startsWith(val));
-  if (matches.length === 1) {
-    input.value = matches[0] + ' ';
-  } else if (matches.length > 1) {
-    term.writeln('\x1b[90m' + matches.join('  ') + '\x1b[0m');
-  }
-}
-
-function sendCmd(cmd) {
-  term.writeln(`\x1b[90mnexus>\x1b[0m \x1b[37m${escAnsi(cmd)}\x1b[0m`);
-  setMode('BUSY');
-  if (termWs && termWs.readyState === WebSocket.OPEN) {
-    termWs.send(JSON.stringify({ type: 'input', data: cmd }));
-  } else {
-    term.writeln('\x1b[31m[nexus] WebSocket not connected\x1b[0m');
-    setMode('IDLE');
-  }
-  setTimeout(() => setMode('IDLE'), 3000);
-}
-
-function clearTerminal() {
-  term.clear();
-  term.writeln('\x1b[90m[nexus] Terminal cleared\x1b[0m');
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────
-function setStatus(id, cls, label) {
-  const el = document.getElementById(id);
-  el.className = 'status-pill ' + cls;
-  el.querySelector('span:last-child').textContent = label;
-}
-
-function setMode(m) {
-  document.getElementById('mode-label').textContent = m;
-  document.getElementById('mode-label').style.color =
-    m === 'BUSY' ? 'var(--amber)' :
-    m === 'ERR'  ? 'var(--red)' : 'var(--text-dim)';
-}
-
-function updateTimestamp() {
-  const now = new Date();
-  document.getElementById('ts-label').textContent =
-    now.toTimeString().slice(0,8);
-}
-
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function escAnsi(s) {
-  return s.replace(/</g,'<').replace(/>/g,'>');
-}
-
-// ── Clock update ──────────────────────────────────────────────────────
-setInterval(updateTimestamp, 1000);
-
-// ── Init ──────────────────────────────────────────────────────────────
-initTerminal();
-connectDeviceWs();
-connectTerminalWs();
-document.getElementById('cmd-input').focus();
 </script>
 </body>
 </html>
