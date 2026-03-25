@@ -53,6 +53,11 @@
 
     #detail { border:1px solid var(--line); background:var(--panel); border-radius:10px; padding:12px; margin-bottom:12px; min-height:180px; }
     #detail p { color:var(--muted); margin:8px 0; }
+    #fb-panel { border:1px solid var(--line); background:var(--panel); border-radius:10px; padding:12px; margin-bottom:12px; }
+    #fb-controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    #fb-controls input { width:90px; }
+    #fb-canvas { width:100%; max-height:320px; background:#0f1218; border:1px solid var(--line); border-radius:8px; image-rendering: pixelated; }
+    #fb-status { color: var(--muted); font-size: 12px; margin-top: 6px; }
 
     #trace { background:var(--panel); border-left:1px solid var(--line); display:flex; flex-direction:column; }
     #terminal { flex:1; padding:6px; }
@@ -118,13 +123,26 @@
         <p style="margin:6px 0;color:#ffd8d8">Tip: run <code>scan</code> and use the detected location + serial path fields before changing firmware.</p>
       </section>
 
-      <section id="detail">
+        <section id="detail">
         <h3 id="device-name">No device selected</h3>
         <p id="device-id">Select a device from The Rack.</p>
         <p id="device-mode"></p>
         <p id="device-family"></p>
         <p id="device-location"></p>
         <p id="device-path"></p>
+      </section>
+
+      <section id="fb-panel">
+        <h3 style="margin:0 0 10px 0;">USB-C Virtual Framebuffer View</h3>
+        <div id="fb-controls">
+          <input id="fb-w" class="select" type="number" min="64" max="1280" value="360" />
+          <input id="fb-h" class="select" type="number" min="64" max="1280" value="640" />
+          <input id="fb-fps" class="select" type="number" min="1" max="20" value="6" />
+          <button class="action" onclick="startFb()">fb start</button>
+          <button class="action" onclick="stopFb()">fb stop</button>
+        </div>
+        <canvas id="fb-canvas" width="360" height="640"></canvas>
+        <div id="fb-status">Framebuffer inactive.</div>
       </section>
     </main>
 
@@ -157,6 +175,9 @@
 
   const deviceWS = new WebSocket(`ws://${location.host}/ws/devices`);
   const termWS = new WebSocket(`ws://${location.host}/ws/terminal/${session}`);
+  const fbWS = new WebSocket(`ws://${location.host}/ws/framebuffer/${session}`);
+  const fbCanvas = document.getElementById('fb-canvas');
+  const fbCtx = fbCanvas.getContext('2d');
 
   deviceWS.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
@@ -167,6 +188,33 @@
   termWS.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'output') term.write(msg.data.replace(/\n/g, '\r\n'));
+  };
+
+  fbWS.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'fb_status') {
+      document.getElementById('fb-status').textContent = `Framebuffer ${msg.enabled ? 'active' : 'inactive'} ${msg.width}x${msg.height} @ ${msg.fps}fps`;
+      return;
+    }
+    if (msg.type !== 'fb_frame') return;
+    const raw = atob(msg.data);
+    const buf = new Uint8ClampedArray(raw.length);
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+    if (fbCanvas.width !== msg.width || fbCanvas.height !== msg.height) {
+      fbCanvas.width = msg.width;
+      fbCanvas.height = msg.height;
+    }
+    const rgba = new Uint8ClampedArray(msg.width * msg.height * 4);
+    let src = 0;
+    let dst = 0;
+    while (src < buf.length) {
+      rgba[dst++] = buf[src++];
+      rgba[dst++] = buf[src++];
+      rgba[dst++] = buf[src++];
+      rgba[dst++] = 255;
+    }
+    fbCtx.putImageData(new ImageData(rgba, msg.width, msg.height), 0, 0);
+    document.getElementById('fb-status').textContent = `Framebuffer active ${msg.width}x${msg.height} frame#${msg.tick}`;
   };
 
   function renderDevices(devices){
@@ -239,6 +287,7 @@
   function runInspect(){
     sendCmd('ports');
     sendCmd('mem probe');
+    sendCmd('fb status');
   }
   function runOperate(){
     if (uiMode === 'beginner') {
@@ -255,6 +304,18 @@
     sendCmd('dfu list');
     sendCmd('jtag probe stlink STM32');
     sendCmd('mem probe');
+    sendCmd('fb status');
+  }
+
+  function startFb(){
+    const w = Number(document.getElementById('fb-w').value || 360);
+    const h = Number(document.getElementById('fb-h').value || 640);
+    const fps = Number(document.getElementById('fb-fps').value || 6);
+    sendCmd(`fb start ${w} ${h} ${fps}`);
+  }
+
+  function stopFb(){
+    sendCmd('fb stop');
   }
 </script>
 </body>
