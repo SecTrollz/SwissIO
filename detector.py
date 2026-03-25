@@ -207,7 +207,10 @@ def _clean_hex_id(raw: str) -> str:
     """Normalize '0x0483' or '0483' → '0483'."""
     if not raw:
         return "0000"
-    return raw.lower().replace("0x", "").zfill(4)
+    normalized = raw.lower().replace("0x", "").strip()
+    if not re.fullmatch(r"[0-9a-f]{1,4}", normalized):
+        return "0000"
+    return normalized.zfill(4)
 
 
 async def enumerate_devices() -> list[USBDevice]:
@@ -216,7 +219,7 @@ async def enumerate_devices() -> list[USBDevice]:
     serial_ports = await asyncio.to_thread(_find_serial_ports)
     results = []
 
-    for raw in raw_devices:
+    for idx, raw in enumerate(raw_devices):
         vid = _clean_hex_id(raw.get("vendor_id", "0000"))
         pid = _clean_hex_id(raw.get("product_id", "0000"))
 
@@ -240,11 +243,11 @@ async def enumerate_devices() -> list[USBDevice]:
             dev.supports_jtag = jtag
 
         # Match serial ports to this device
-        for port in serial_ports:
-            # Best effort: match by modem/serial patterns
-            dev.serial_port = port  # simplified; real impl would match location IDs
+        # Best effort: deterministic one-port-per-device assignment.
+        # Real implementations should map by location/interface descriptors.
+        if idx < len(serial_ports):
+            dev.serial_port = serial_ports[idx]
             dev.connection_mode = ConnectionMode.SERIAL_CDC
-            break
 
         dev.connection_mode = _detect_connection_mode(raw, dev.serial_port is not None)
         results.append(dev)

@@ -4,7 +4,9 @@ Local USB device discovery + terminal command bridge
 """
 
 import asyncio
+import base64
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -27,6 +29,7 @@ INDEX_FILE = ROOT_DIR / "index.html"
 
 device_ws_clients: list[WebSocket] = []
 terminal_sessions: dict[str, dict] = {}  # session_id -> {ws, uart, armed, tier, profile}
+framebuffer_sessions: dict[str, dict] = {}  # session_id -> {ws, enabled, width, height, fps, task, tick}
 assistant = LocalAssistantOrchestrator()
 ghidra_cfg = load_ghidra_mcp_config()
 
@@ -40,7 +43,8 @@ async def broadcast_devices(devices: list[USBDevice]):
         except Exception:
             dead.append(ws)
     for ws in dead:
-        device_ws_clients.remove(ws)
+        if ws in device_ws_clients:
+            device_ws_clients.remove(ws)
 
 
 @app.on_event("startup")
@@ -87,13 +91,38 @@ async def ws_terminal(ws: WebSocket, session_id: str):
     try:
         while True:
             raw = await ws.receive_text()
-            msg = json.loads(raw)
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await send("\x1b[31mInvalid message format (expected JSON).\x1b[0m")
+                continue
             if msg.get("type") == "input":
                 await handle_command(msg.get("data", "").strip(), session_id, send)
     except WebSocketDisconnect:
         sess = terminal_sessions.pop(session_id, None)
         if sess and sess.get("uart"):
             sess["uart"].close()
+        fb = framebuffer_sessions.pop(session_id, None)
+        if fb and fb.get("task"):
+            fb["enabled"] = False
+            fb["task"].cancel()
+
+
+@app.websocket("/ws/framebuffer/{session_id}")
+async def ws_framebuffer(ws: WebSocket, session_id: str):
+    await ws.accept()
+    state = framebuffer_sessions.setdefault(
+        session_id,
+        {"ws": None, "enabled": False, "width": 360, "height": 640, "fps": 6, "task": None, "tick": 0},
+    )
+    state["ws"] = ws
+    await ws.send_text(json.dumps({"type": "fb_status", "enabled": state["enabled"], "width": state["width"], "height": state["height"], "fps": state["fps"]}))
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        if session_id in framebuffer_sessions:
+            framebuffer_sessions[session_id]["ws"] = None
 
 
 
@@ -114,12 +143,60 @@ def _requires_flash_gate(verb: str, args: list[str]) -> bool:
     return False
 
 
+def _make_virtual_frame_rgb24(width: int, height: int, tick: int) -> bytes:
+    frame = bytearray(width * height * 3)
+    idx = 0
+    for y in range(height):
+        for x in range(width):
+            frame[idx] = (x + tick) % 256
+            frame[idx + 1] = (y + (tick * 2)) % 256
+            frame[idx + 2] = (x ^ y ^ tick) % 256
+            idx += 3
+    return bytes(frame)
+
+
+async def _framebuffer_loop(session_id: str):
+    while True:
+        state = framebuffer_sessions.get(session_id)
+        if not state or not state.get("enabled"):
+            return
+        ws = state.get("ws")
+        if ws:
+            width = int(state["width"])
+            height = int(state["height"])
+            tick = int(state.get("tick", 0))
+            rgb = await asyncio.to_thread(_make_virtual_frame_rgb24, width, height, tick)
+            payload = {
+                "type": "fb_frame",
+                "width": width,
+                "height": height,
+                "encoding": "rgb24-base64",
+                "tick": tick,
+                "data": base64.b64encode(rgb).decode("ascii"),
+            }
+            try:
+                await ws.send_text(json.dumps(payload))
+            except Exception:
+                state["ws"] = None
+        state["tick"] = int(state.get("tick", 0)) + 1
+        await asyncio.sleep(max(1.0 / float(state.get("fps", 6)), 0.05))
+
+
 async def handle_command(cmd: str, session_id: str, send):
     if not cmd:
         return
 
-    sess = terminal_sessions[session_id]
-    parts = cmd.split()
+    sess = terminal_sessions.get(session_id)
+    if not sess:
+        await send("\x1b[31mSession not found. Reconnect terminal.\x1b[0m")
+        return
+    try:
+        parts = shlex.split(cmd)
+    except ValueError as exc:
+        await send(f"\x1b[31mCommand parse error: {exc}\x1b[0m")
+        return
+    if not parts:
+        return
     verb = parts[0].lower()
     args = parts[1:]
 
@@ -181,6 +258,7 @@ async def handle_command(cmd: str, session_id: str, send):
             "  expert  : mem probe <vid> <pid>, jtag probe <iface> <target>, dfu list",
             "  rights  : show right-to-repair workflow guidance",
             "  ai      : local AI assistant (status|ghidra|explain <text>|check <cmd>)",
+            "  fb      : USB-C virtual framebuffer (status|start [w] [h] [fps]|stop)",
             "  terminal: uart open <port> [baud], uart close",
         ]:
             await send(line)
@@ -206,12 +284,18 @@ async def handle_command(cmd: str, session_id: str, send):
             return
 
         if sub == "explain":
-            excerpt = cmd.split(" ", 2)[2] if len(parts) > 2 else ""
+            excerpt = " ".join(parts[2:]) if len(parts) > 2 else ""
+            if not excerpt:
+                await send("Usage: ai explain <terminal text>")
+                return
             await send(assistant.explain_terminal_output(excerpt, ctx))
             return
 
         if sub == "check":
-            candidate = cmd.split(" ", 2)[2] if len(parts) > 2 else ""
+            candidate = " ".join(parts[2:]) if len(parts) > 2 else ""
+            if not candidate:
+                await send("Usage: ai check <command>")
+                return
             gate = assistant.logic_check(candidate, ctx)
             state = "PASS" if gate.ok else "BLOCK"
             await send(f"AI logic-check {state}: {gate.reason}")
@@ -245,6 +329,44 @@ async def handle_command(cmd: str, session_id: str, send):
             await send(f"  serial path: {d.serial_port or 'n/a'}")
         return
 
+    if verb == "fb":
+        sub = args[0].lower() if args else "status"
+        state = framebuffer_sessions.setdefault(
+            session_id,
+            {"ws": None, "enabled": False, "width": 360, "height": 640, "fps": 6, "task": None, "tick": 0},
+        )
+        if sub == "status":
+            await send(f"[FB] enabled={state['enabled']} size={state['width']}x{state['height']} fps={state['fps']}")
+            return
+        if sub == "start":
+            try:
+                width = int(args[1]) if len(args) > 1 else int(state["width"])
+                height = int(args[2]) if len(args) > 2 else int(state["height"])
+                fps = int(args[3]) if len(args) > 3 else int(state["fps"])
+            except ValueError:
+                await send("Usage: fb start [width] [height] [fps]")
+                return
+            if width <= 0 or height <= 0 or fps <= 0:
+                await send("[FB] width/height/fps must be positive integers")
+                return
+            state["width"] = min(width, 1280)
+            state["height"] = min(height, 1280)
+            state["fps"] = min(fps, 20)
+            state["enabled"] = True
+            if not state.get("task") or state["task"].done():
+                state["task"] = asyncio.create_task(_framebuffer_loop(session_id))
+            await send(f"[FB] virtual capture started at {state['width']}x{state['height']} @ {state['fps']}fps")
+            return
+        if sub == "stop":
+            state["enabled"] = False
+            if state.get("task") and not state["task"].done():
+                state["task"].cancel()
+            state["task"] = None
+            await send("[FB] capture stopped")
+            return
+        await send("Usage: fb status | fb start [width] [height] [fps] | fb stop")
+        return
+
     if verb == "ports":
         async for line in UARTHandler.list_ports():
             await send(line)
@@ -271,7 +393,11 @@ async def handle_command(cmd: str, session_id: str, send):
         sub = args[0].lower() if args else ""
         if sub == "open":
             port = args[1] if len(args) > 1 else "/dev/tty.usbmodem0001"
-            baud = int(args[2]) if len(args) > 2 else 115200
+            try:
+                baud = int(args[2]) if len(args) > 2 else 115200
+            except ValueError:
+                await send("\x1b[31mInvalid baud rate. Must be an integer.\x1b[0m")
+                return
             handler = UARTHandler(port, baud)
             sess["uart"] = handler
             asyncio.create_task(_uart_stream(handler, send))
@@ -292,15 +418,24 @@ async def handle_command(cmd: str, session_id: str, send):
 
     if verb == "jtag":
         sub = args[0].lower() if args else "probe"
-        ocd = OpenOCDHandler(interface=(args[1] if len(args) > 1 else "stlink"), target=(args[2] if len(args) > 2 else "STM32"))
         if sub == "probe":
+            iface = args[1] if len(args) > 1 else "stlink"
+            target = args[2] if len(args) > 2 else "STM32"
+            ocd = OpenOCDHandler(interface=iface, target=target)
             async for line in ocd.probe():
                 await send(line)
         elif sub == "dump":
-            async for line in ocd.dump_flash(args[1] if len(args) > 1 else "/tmp/swissio_dump.bin", args[2] if len(args) > 2 else "0x08000000", args[3] if len(args) > 3 else "0x80000"):
+            dump_file = args[1] if len(args) > 1 else "/tmp/swissio_dump.bin"
+            address = args[2] if len(args) > 2 else "0x08000000"
+            length = args[3] if len(args) > 3 else "0x80000"
+            ocd = OpenOCDHandler()
+            async for line in ocd.dump_flash(dump_file, address, length):
                 await send(line)
         elif sub == "flash" and len(args) > 1:
-            async for line in ocd.flash_image(args[1], args[2] if len(args) > 2 else "0x08000000"):
+            image_path = args[1]
+            address = args[2] if len(args) > 2 else "0x08000000"
+            ocd = OpenOCDHandler()
+            async for line in ocd.flash_image(image_path, address):
                 await send(line)
         else:
             await send("Usage: jtag probe [iface] [target] | jtag dump [file] [addr] [len] | jtag flash <file> [addr]")
@@ -313,12 +448,22 @@ async def handle_command(cmd: str, session_id: str, send):
             async for line in iommu.probe():
                 await send(line)
         elif sub == "read":
-            addr = int(args[1], 16) if len(args) > 1 else 0
-            length = int(args[2], 16) if len(args) > 2 else 0x100
+            try:
+                addr = int(args[1], 16) if len(args) > 1 else 0
+                length = int(args[2], 16) if len(args) > 2 else 0x100
+            except ValueError:
+                await send("\x1b[31mInvalid hex value. Use mem read <addr_hex> [len_hex].\x1b[0m")
+                return
             async for line in iommu.read_memory(addr, length):
                 await send(line)
         elif sub == "write" and len(args) > 2:
-            async for line in iommu.write_memory(int(args[1], 16), bytes.fromhex(args[2])):
+            try:
+                address = int(args[1], 16)
+                payload = bytes.fromhex(args[2])
+            except ValueError:
+                await send("\x1b[31mInvalid hex input. Use mem write <addr_hex> <data_hex>.\x1b[0m")
+                return
+            async for line in iommu.write_memory(address, payload):
                 await send(line)
         else:
             await send("Usage: mem probe [vid] [pid] | mem read <addr_hex> [len_hex] | mem write <addr_hex> <data_hex>")
@@ -328,8 +473,11 @@ async def handle_command(cmd: str, session_id: str, send):
 
 
 async def _uart_stream(handler: UARTHandler, send):
-    async for data in handler.open():
-        await send(data)
+    try:
+        async for data in handler.open():
+            await send(data)
+    except Exception as exc:
+        await send(f"\x1b[31m[UART] stream error: {exc}\x1b[0m")
 
 
 if __name__ == "__main__":

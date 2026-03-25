@@ -5,10 +5,8 @@ Each handler returns an async generator that yields terminal output lines.
 """
 
 import asyncio
-import subprocess
 import shutil
 import os
-import glob
 from typing import AsyncGenerator, Optional
 
 
@@ -18,47 +16,38 @@ from typing import AsyncGenerator, Optional
 
 async def _stream_process(proc: asyncio.subprocess.Process) -> AsyncGenerator[str, None]:
     """Yield stdout/stderr lines from a subprocess as they arrive."""
-    async def read_stream(stream, tag=""):
+    queue: asyncio.Queue[tuple[bool, str]] = asyncio.Queue()
+
+    async def drain_stream(stream: asyncio.StreamReader, tag: str = ""):
         while True:
             line = await stream.readline()
             if not line:
                 break
-            yield f"{tag}{line.decode(errors='replace').rstrip()}"
+            color_reset = "\x1b[0m" if tag else ""
+            await queue.put((False, f"{tag}{line.decode(errors='replace').rstrip()}{color_reset}"))
+        await queue.put((True, ""))
 
-    tasks = []
+    drainers = []
+    expected_done = 0
     if proc.stdout:
-        tasks.append(read_stream(proc.stdout))
+        drainers.append(asyncio.create_task(drain_stream(proc.stdout)))
+        expected_done += 1
     if proc.stderr:
-        tasks.append(read_stream(proc.stderr, "\x1b[33m"))  # stderr in yellow
+        drainers.append(asyncio.create_task(drain_stream(proc.stderr, "\x1b[33m")))
+        expected_done += 1
 
-    # Interleave both streams
-    queues = [asyncio.Queue() for _ in tasks]
-
-    async def drain(gen, q):
-        async for line in gen:
-            await q.put(line)
-        await q.put(None)  # sentinel
-
-    drainers = [asyncio.create_task(drain(t, q)) for t, q in zip(tasks, queues)]
-
-    finished = [False] * len(queues)
-    while not all(finished):
-        for i, q in enumerate(queues):
-            if finished[i]:
-                continue
-            try:
-                item = q.get_nowait()
-                if item is None:
-                    finished[i] = True
-                else:
-                    yield item
-            except asyncio.QueueEmpty:
-                pass
-        await asyncio.sleep(0.01)
+    done_count = 0
+    while done_count < expected_done:
+        is_done, item = await queue.get()
+        if is_done:
+            done_count += 1
+        else:
+            yield item
 
     await proc.wait()
-    for d in drainers:
-        d.cancel()
+    for task in drainers:
+        if not task.done():
+            task.cancel()
 
 
 def _tool_check(name: str) -> Optional[str]:
@@ -408,9 +397,20 @@ class IOMMUHandler:
     """
 
     def __init__(self, vid: str = None, pid: str = None):
-        self.vid = vid
-        self.pid = pid
+        self.vid = self._normalize_hex_id(vid)
+        self.pid = self._normalize_hex_id(pid)
         self._dev = None
+
+    @staticmethod
+    def _normalize_hex_id(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.lower().replace("0x", "").strip()
+        if not normalized:
+            return None
+        if any(ch not in "0123456789abcdef" for ch in normalized):
+            return None
+        return normalized.zfill(4)
 
     async def _get_usb_device(self):
         """Find USB device by VID/PID using pyusb."""
